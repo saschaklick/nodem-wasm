@@ -3,6 +3,9 @@ name = "nodem-wasm"
 version = "0.1.0"
 authors = ["Sascha Klick <sascha.klick@toasternet.eu>"]
 edition = "2021"
+repository = "https://github.com/saschaklick/nodem-wasm"
+desciption = "Implementation for the nodem-rs framework as a WASM library"
+license = "MIT"
 
 [features]
 dom = ["nodem-rs/dom"]
