@@ -4,7 +4,7 @@ version = "0.1.0"
 authors = ["Sascha Klick <sascha.klick@toasternet.eu>"]
 edition = "2021"
 repository = "https://github.com/saschaklick/nodem-wasm"
-desciption = "Implementation for the nodem-rs framework as a WASM library"
+description = "Implementation for the nodem-rs framework as a WASM library"
 license = "MIT"
 
 [features]
@@ -27,5 +27,4 @@ wasm-bindgen-futures = "0.4.50"
 bitmap_writer = { version = "0.1.2" }
 nodem-rs = { git = "https://github.com/saschaklick/nodem-rs", features = ["std", "base", "compile", "vm"] }
 virtmach = { git = "https://github.com/saschaklick/virtmach-rs", features = ["i16", "random", "compile"], optional = true }
-
 
