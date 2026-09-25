@@ -20,5 +20,7 @@ jobs:
     - uses: jetli/wasm-pack-action@v0.4.0
       with:    
         version: 'latest'    
+    - name: Update cargo repos
+      run: cargo update
     - name: Build with wasm-pack
       run: wasm-pack build --target web --features=dom,vm,compile --debug --
