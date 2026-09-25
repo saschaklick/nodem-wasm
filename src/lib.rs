@@ -191,7 +191,7 @@ pub fn load_pkg(data: &[u8], source: Option<u8>) {
 }
 
 #[wasm_bindgen]
-pub fn generate_pkg(sources: Option<u8>) -> Uint8ClampedArray {
+pub fn generate_pkg(name: JsValue, sources: Option<u8>) -> Uint8ClampedArray {
     if unsafe { GLOBALS.is_none() } {
         log::error!("generate_pkg locked");
         return Uint8ClampedArray::new(&JsValue::null());
@@ -199,8 +199,9 @@ pub fn generate_pkg(sources: Option<u8>) -> Uint8ClampedArray {
     
     let mut globals = unsafe { GLOBALS.take().unwrap() };        
     let surface = &mut globals.surface;    
-
-    let buf = surface.media.generate_pkg(sources.unwrap_or(0b11111110), true);    
+    
+    let jsname = JsString::from(name);
+    let buf = surface.media.generate_pkg(sources.unwrap_or(0b11111110), jsname.as_string().unwrap().as_str(), true);    
     
     unsafe { GLOBALS.replace(globals) }; 
 
