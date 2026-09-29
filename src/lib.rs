@@ -343,6 +343,7 @@ pub fn import_program(index: u8, name: &str, content: &str) -> JsValue {
     let ret = match VirtMach::compile(name, content, [
         (proc::NAME, proc::FUNCTIONS.as_slice()),
         (math::NAME, math::FUNCTIONS.as_slice()),
+        (string::NAME, string::FUNCTIONS.as_slice()),
         (random::NAME, random::FUNCTIONS.as_slice()),
         (interrupts::surface::NAME, interrupts::surface::FUNCTIONS.as_slice())
     ].as_ref().to_vec()) {
@@ -544,9 +545,10 @@ pub fn process_commands(cmds: JsValue) -> JsValue {
         let cmd_str = str::from_utf8(cmd_b).unwrap_or("").split("\n").next().unwrap_or("");
         let ret = match cmd_str {
             "vm.stp" | "vm.run" | "vm.fnc" => {
-                let mut interrupts: [&mut dyn SoftInterrupt;4] = [
+                let mut interrupts: [&mut dyn SoftInterrupt;5] = [
                     &mut proc::Interrupt {},
                     &mut math::Interrupt {},
+                    &mut string::Interrupt {},
                     &mut random::Interrupt {},
                     &mut int_surface::IntSurface { surface : surface }
                 ];
