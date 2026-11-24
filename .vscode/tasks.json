@@ -3,7 +3,7 @@
 	"tasks": [
 		{
 			"type": "shell",
-			"command": "RUSTFLAGS='--cfg nodem_mode=\"index1\" --cfg basic_console=\"surface\"' wasm-pack build --target web --features=dom,vm,compile --debug --",
+			"command": "RUSTFLAGS='--cfg nodem_mode=\"index1\" --cfg basic_console=\"surface\"' wasm-pack build --target web --features=dom,vm,compile --",
 			"problemMatcher": [
 				"$rustc"
 			],
@@ -12,12 +12,30 @@
 		},
 		{
 			"type": "shell",
-			"command": "RUSTFLAGS='--cfg nodem_mode=\"rgb24\" --cfg basic_console=\"surface\"' wasm-pack build --target web --features=dom,vm,compile --debug --",
+			"command": "RUSTFLAGS='--cfg nodem_mode=\"rgb24\" --cfg basic_console=\"surface\"' wasm-pack build --target web --features=dom,vm,compile --",
 			"problemMatcher": [
 				"$rustc"
 			],
 			"group": "build",
 			"label": "wasm: build (rgb24)"
+		},
+		{
+			"type": "shell",
+			"command": "RUSTFLAGS='--cfg nodem_mode=\"index1\" --cfg basic_console=\"surface\"' wasm-pack build --target web --features=dom,vm,compile --debug --",
+			"problemMatcher": [
+				"$rustc"
+			],
+			"group": "build",
+			"label": "wasm: build debug (index1)"
+		},
+		{
+			"type": "shell",
+			"command": "RUSTFLAGS='--cfg nodem_mode=\"rgb24\" --cfg basic_console=\"surface\"' wasm-pack build --target web --features=dom,vm,compile --debug --",
+			"problemMatcher": [
+				"$rustc"
+			],
+			"group": "build",
+			"label": "wasm: build debug (rgb24)"
 		}
 	]
 }

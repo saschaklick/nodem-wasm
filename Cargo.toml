@@ -27,11 +27,19 @@ bytes = "1.10.1"
 nostd = "0.1.6"
 wasm-bindgen-futures = "0.4.50"
 bitmap_writer = { version = "0.1.2" }
-#nodem-rs = { git = "https://github.com/saschaklick/nodem-rs", features = ["std", "base", "compile", "vm"] }
-nodem-rs = { path = "../nodem-rs", features = ["std", "base", "compile", "vm"] }
-#virtmach = { git = "https://github.com/saschaklick/virtmach-rs", features = ["i16", "int_math_full", "compile", "basic"], optional = true }
-virtmach = { path = "../virtmach-rs", features = ["i16", "int_math_full", "compile", "basic"], optional = true }
+nodem-rs = { git = "https://github.com/saschaklick/nodem-rs", features = ["std", "base", "compile", "vm"] }
+virtmach = { git = "https://github.com/saschaklick/virtmach-rs", features = ["i16", "int_math_full", "compile", "basic"], optional = true }
 
+
+# Size: opt-level z + fat LTO + one codegen unit take the wasm from ~1000 KB to ~630 KB, wasm-opt -Oz to ~600 KB
+[profile.release]
+opt-level = "z"
+lto = true
+codegen-units = 1
+panic = "abort"
+
+[package.metadata.wasm-pack.profile.release]
+wasm-opt = ["-Oz", "--enable-bulk-memory", "--enable-nontrapping-float-to-int", "--enable-sign-ext", "--enable-mutable-globals", "--enable-reference-types", "--enable-multivalue"]
 
 [lints.rust]
 unexpected_cfgs = { level = "allow", check-cfg = ["cfg(nodem_mode)"] }
