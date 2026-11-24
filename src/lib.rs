@@ -25,6 +25,8 @@ mod surface;
 mod dom;
 #[cfg(feature = "vm")]
 mod vm;
+#[cfg(all(feature = "vm", feature = "int_nodem"))]
+mod nodem;
 
 /// Without the `dom` feature the DOM exports only report that it is missing.
 #[cfg(not(feature = "dom"))]
@@ -49,6 +51,8 @@ struct Globals <'a> {
     dom: DOM,
     #[cfg(feature = "vm")]
     vm: VirtMach<'a>,
+    #[cfg(feature = "vm")]
+    time: vm::TimeState,
     scr_buffer: BytesMut,
     dom_buffer: BytesMut,
     // One persistent buffer PER source. media.load_pkg stores the lib data as a POINTER into the
@@ -85,6 +89,8 @@ pub async fn main() -> Result<(), JsValue> {
         dom: DOM::default(),
         #[cfg(feature = "vm")]
         vm: VirtMach::new(),
+        #[cfg(feature = "vm")]
+        time: Default::default(),
         scr_buffer: BytesMut::zeroed(1),
         dom_buffer: BytesMut::zeroed(1),
         int_buffers: core::array::from_fn(|_| BytesMut::zeroed(1))
@@ -141,6 +147,8 @@ pub fn process_commands(cmds: JsValue) -> JsValue {
         let dom = &mut globals.dom;
         #[cfg(feature = "vm")]
         let vm = &mut globals.vm;
+        #[cfg(feature = "vm")]
+        let time = &mut globals.time;
         let control = &mut globals.control;
 
         let mut res = BytesMut::with_capacity(1024);
@@ -159,7 +167,7 @@ pub fn process_commands(cmds: JsValue) -> JsValue {
 
         let ret = if is_vm_cmd {
             #[cfg(feature = "vm")]
-            vm::command(cmd_str, vm, surface, &mut res);
+            vm::command(cmd_str, vm, surface, time, &mut res);
             Ok(())
         } else {
             control.process(cmd_b, surface, &mut listener, &mut res).1

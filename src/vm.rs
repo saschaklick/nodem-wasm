@@ -4,72 +4,75 @@
 use bytes::BytesMut;
 use nostd::{ format, string::String };
 use nodem_rs::{ int_surface, surface::Surface };
-use virtmach::{ VirtMach, interrupts::{ self, * } };
+use virtmach::{ RuntimeError, Runtime, VMAtom, VirtMach, interrupt_set, interrupts::* };
+use js_sys::Date;
 use wasm_bindgen::prelude::*;
 
 use crate::GLOBALS;
 
-/// The device API of user programs: interrupt "nodem", the first custom interrupt after virtmach's
-/// built-in slots (number interrupts::BUILTIN_SLOTS, i.e. 10).
-/// Implemented by the device firmware (nodem-ai-editor: firmware/nodem-vm/src/lib.rs) — keep numbers in sync.
-pub static NODEM_FUNCTIONS: [interrupts::SoftInterruptFunction; 27] = [
-    interrupts::SoftInterruptFunction { no: 0, name: "wait",        arguments: 1, returns: 0, help: "Pause the program for ms milliseconds, 0 = until the next frame (ms)->()" },
-    interrupts::SoftInterruptFunction { no: 1, name: "button",      arguments: 0, returns: 1, help: "Next button press: 0 none, 1-4 short press of button n, 11-14 long press ()->(key)" },
-    interrupts::SoftInterruptFunction { no: 2, name: "page",        arguments: 0, returns: 2, help: "Image slot shown now and number of slots ()->(active,count)" },
-    interrupts::SoftInterruptFunction { no: 3, name: "set_page",    arguments: 1, returns: 0, help: "Show image slot n (n)->()" },
-    interrupts::SoftInterruptFunction { no: 4, name: "led",         arguments: 2, returns: 0, help: "Switch LED n (1-4) on (1) or off (0) (n,on)->()" },
-    interrupts::SoftInterruptFunction { no: 5, name: "set_text",    arguments: 2, returns: 0, help: "Show a number as the text of page node n (node,value)->()" },
-    interrupts::SoftInterruptFunction { no: 6, name: "report",      arguments: 2, returns: 0, help: "Send a reading to the server as sensor vm<id> (id,value)->()" },
-    interrupts::SoftInterruptFunction { no: 7, name: "uptime",      arguments: 0, returns: 1, help: "Seconds since the device started, wraps at 32767 ()->(s)" },
-    interrupts::SoftInterruptFunction { no: 8, name: "gps",         arguments: 0, returns: 2, help: "GPS satellites tracked and whether there is a fix ()->(sats,fix)" },
-    interrupts::SoftInterruptFunction { no: 9, name: "set_visible", arguments: 2, returns: 0, help: "Show (1) or hide (0) page node n (node,on)->()" },
-    interrupts::SoftInterruptFunction { no: 10, name: "status",     arguments: 1, returns: 1, help: "Device status by id, 0 if the board does not know it (id)->(value)" },
-    interrupts::SoftInterruptFunction { no: 11, name: "has",        arguments: 1, returns: 1, help: "Whether the board knows status id: 1 or 0 (id)->(known)" },
-    interrupts::SoftInterruptFunction { no: 12, name: "value",      arguments: 1, returns: 1, help: "Number k the server set (k)->(value)" },
-    interrupts::SoftInterruptFunction { no: 13, name: "str_clear",  arguments: 1, returns: 0, help: "Empty text slot s (s)->()" },
-    interrupts::SoftInterruptFunction { no: 14, name: "str_add",    arguments: 2, returns: 0, help: "Append text slot t to text slot s (s,t)->()" },
-    interrupts::SoftInterruptFunction { no: 15, name: "str_num",    arguments: 2, returns: 0, help: "Append a number to text slot s (s,value)->()" },
-    interrupts::SoftInterruptFunction { no: 16, name: "str_char",   arguments: 2, returns: 0, help: "Append the character with code c to text slot s, 32 = space (s,c)->()" },
-    interrupts::SoftInterruptFunction { no: 17, name: "str_len",    arguments: 1, returns: 1, help: "Characters in text slot s (s)->(len)" },
-    interrupts::SoftInterruptFunction { no: 18, name: "str_to_num", arguments: 1, returns: 1, help: "The number text slot s starts with, 0 if none (s)->(value)" },
-    interrupts::SoftInterruptFunction { no: 19, name: "str_eq",     arguments: 2, returns: 1, help: "Whether text slots a and b are equal: 1 or 0 (a,b)->(equal)" },
-    interrupts::SoftInterruptFunction { no: 20, name: "show",       arguments: 2, returns: 0, help: "Show text slot s as the text of page node n (node,s)->()" },
-    interrupts::SoftInterruptFunction { no: 21, name: "send",       arguments: 2, returns: 0, help: "Send text slot s to the server as text output id (id,s)->()" },
-    interrupts::SoftInterruptFunction { no: 22, name: "str_new",    arguments: 1, returns: 1, help: "1 once after the server changed text slot s, else 0 (s)->(changed)" },
-    interrupts::SoftInterruptFunction { no: 23, name: "layout",        arguments: 1, returns: 1, help: "Switch to text layout n (a #layout block): its slots start empty, the base stays; 1 if switched (n)->(ok)" },
-    interrupts::SoftInterruptFunction { no: 24, name: "layout_active", arguments: 0, returns: 1, help: "The text layout in use, -1 = none ()->(n)" },
-    interrupts::SoftInterruptFunction { no: 25, name: "text_used",     arguments: 0, returns: 1, help: "Bytes the current text slots reserve ()->(bytes)" },
-    interrupts::SoftInterruptFunction { no: 26, name: "text_budget",   arguments: 0, returns: 1, help: "Bytes of text memory this board allows ()->(bytes)" },
-];
+// The interrupts of the vm, written once for the tables a program is compiled and documented
+// with (`interrupts!(tables)`) and for the list the vm runs with (`interrupts!(let list, <time>, <surface>)`,
+// the references follow in the order of the `_` items). Each built-in interrupt is at its virtmach
+// INDEX, slots without one run a dummy. With the `int_nodem` feature the custom "nodem" is the first
+// number after the built-ins; only the device implements it, here it is a stub.
+#[cfg(not(feature = "int_nodem"))]
+interrupt_set!(interrupts = [math, proc, string, time => _, surface => _, periph]);
 
-/// Modules a program can `#req`. Built-ins get their fixed virtmach INDEX (see
-/// interrupts::interrupt_numbers), custom ones (nodem) follow.
-fn program_modules() -> [(&'static str, &'static [interrupts::SoftInterruptFunction<'static>]); 7] {
-    [
-        (math::NAME, math::FUNCTIONS.as_slice()),
-        (proc::NAME, proc::FUNCTIONS.as_slice()),
-        (string::NAME, string::FUNCTIONS.as_slice()),
-        (time::NAME, time::FUNCTIONS.as_slice()),
-        (interrupts::surface::NAME, interrupts::surface::FUNCTIONS.as_slice()),
-        (periph::NAME, periph::FUNCTIONS.as_slice()),
-        ("nodem", NODEM_FUNCTIONS.as_slice()),
-    ]
+#[cfg(feature = "int_nodem")]
+interrupt_set!(interrupts = [
+    math, proc, string, time => _, surface => _, periph,
+    ext("nodem", virtmach::interrupts::BUILTIN_SLOTS, &mut dummy::Interrupt {}, &crate::nodem::FUNCTIONS)
+]);
+
+/// The names in the signature at the end of a help text, `... (a,b)->(res)`: the arguments and the
+/// returns, None if there is none.
+fn signature(help: &str) -> Option<(&str, &str)> {
+    let (head, rets) = help.trim_end().rsplit_once("->(")?;
+    let rets = rets.strip_suffix(')')?;
+    let head = head.strip_suffix(')')?;
+    Some((&head[head.rfind('(')? + 1..], rets))
 }
 
-/// Every function a program can call, as JSON: [{module, name, no, arguments, returns, help}].
-#[wasm_bindgen]
-pub fn program_reference() -> JsValue {
-    let mut out = String::from("[");
-    for (module, functions) in program_modules() {
-        for f in functions {
-            if out.len() > 1 { out.push(','); }
-            out.push_str(&format!(
-                "{{\"module\":\"{}\",\"name\":\"{}\",\"no\":{},\"arguments\":{},\"returns\":{},\"help\":\"{}\"}}",
-                module, f.name, f.no, f.arguments, f.returns, f.help.replace('"', "'")
-            ));
+/// Appends a JSON array of `count` names: the comma separated ones of the signature, or
+/// `<fallback>0`, `<fallback>1`... if there are not exactly that many.
+fn push_names(out: &mut String, names: Option<&str>, count: usize, fallback: &str) {
+    let names = names.filter(|n| n.split(',').filter(|n| !n.trim().is_empty()).count() == count);
+    out.push('[');
+    for i in 0..count {
+        if i > 0 { out.push(','); }
+        match names.and_then(|n| n.split(',').nth(i)) {
+            Some(name) => out.push_str(&format!("\"{}\"", name.trim().replace('"', "'"))),
+            None => out.push_str(&format!("\"{}{}\"", fallback, i))
         }
     }
     out.push(']');
+}
+
+/// Every function a program can call, as JSON, `_i` being the number of the interrupt or function:
+///
+/// ```json
+/// { "math": { "_i": 0, "and": { "_i": 0, "args": ["num0", "num1"], "rets": ["res"], "help": "..." }, ... },
+///   "proc": { ... } }
+/// ```
+#[wasm_bindgen]
+pub fn program_reference() -> JsValue {
+    let mut out = String::from("{");
+    for (i, table) in interrupts!(tables).iter().enumerate() {
+        if i > 0 { out.push(','); }
+        out.push_str(&format!("\"{}\":{{\"_i\":{}", table.name, table.number));
+        for (j, f) in table.functions.iter().enumerate() {
+            // a name used twice is the last one for the compiler, so it is for the reference
+            if table.functions[j + 1..].iter().any(|g| g.name == f.name) { continue; }
+            let (args, rets) = signature(f.help).unzip();
+            out.push_str(&format!(",\"{}\":{{\"_i\":{},\"args\":", f.name, f.no));
+            push_names(&mut out, args, f.arguments, "arg");
+            out.push_str(",\"rets\":");
+            push_names(&mut out, rets, f.returns, "ret");
+            out.push_str(&format!(",\"help\":\"{}\"}}", f.help.replace('"', "'")));
+        }
+        out.push('}');
+    }
+    out.push('}');
     JsValue::from_str(&out)
 }
 
@@ -83,7 +86,7 @@ pub fn import_program(index: u8, name: &str, content: &str) -> JsValue {
     let mut globals = unsafe { GLOBALS.take().unwrap() };
     let surface = &mut globals.surface;
 
-    let ret = match VirtMach::compile(name, content, program_modules().to_vec()) {
+    let ret = match VirtMach::compile_tables(name, content, &interrupts!(tables)) {
         Ok(res) => {
             surface.media.import_program(index, name, &res.0.data);
             JsValue::null()
@@ -113,41 +116,189 @@ pub fn remove_program(index: u8) {
     unsafe { GLOBALS.replace(globals) };
 }
 
+/// Time of the vm. The wasm side has no clock to sleep on: JS passes the time in with every
+/// `vm_run` and waits as long as `vm_run` returns. Waits only store a deadline here and pause
+/// the vm, `vm_run` does not run it again before the deadline. All values are milliseconds on
+/// the clock JS passes in (`performance.now()`).
+#[derive(Default)]
+pub struct TimeState {
+    /// the clock at the start of the current `vm_run`
+    now: f64,
+    /// when the last wait_until returned, the first one counts from the start of the program
+    last: f64,
+    /// the vm must not run before this, set by wait_for, wait_until and the tick
+    deadline: Option<f64>,
+    /// what the program set with set_tick, waited after HLT
+    tick: f64
+}
+
+impl TimeState {
+    /// A new program starts now: no deadline, no tick, wait_until counts from here
+    fn start(&mut self, now: f64) {
+        *self = TimeState { now, last: now, deadline: None, tick: 0.0 };
+    }
+
+    /// ms until the deadline, clears it once it has passed
+    fn remaining(&mut self) -> Option<f64> {
+        match self.deadline {
+            Some(deadline) if deadline > self.now => Some(deadline - self.now),
+            _ => { self.deadline = None; None }
+        }
+    }
+}
+
+/// seconds * 1000 + milliseconds, None if negative
+fn interval(seconds: VMAtom, milliseconds: VMAtom) -> Option<f64> {
+    if seconds < 0 || milliseconds < 0 { return None; }
+    Some(seconds as f64 * 1000.0 + milliseconds as f64)
+}
+
+/// The time interrupt (slot `time::INDEX`) on the clock `vm_run` passes in. get_time and get_date
+/// read the local time of the browser, year needs at least 16 bit atoms.
+pub struct Time<'a> {
+    pub state: &'a mut TimeState
+}
+
+impl SoftInterrupt for Time<'_> {
+    fn name(&self) -> &str {
+        time::NAME
+    }
+
+    fn functions(&self) -> &'static [SoftInterruptFunction<'static>] where Self: Sized {
+        &time::FUNCTIONS
+    }
+
+    fn call(&mut self, vm: &mut VirtMach) {
+        let op = vm.stack_pop();
+        let state = &mut *self.state;
+        match op {
+            // wait_for(seconds, milliseconds): the interval counts from now
+            0 => match interval(vm.stack_pop(), vm.stack_pop()) {
+                Some(ms) => { state.deadline = Some(state.now + ms); vm.pause(); }
+                None => { vm.error = RuntimeError::InterruptError; }
+            }
+            // wait_until(seconds, milliseconds): the interval counts from the last wait_until,
+            // if that is over already return at once and count the next one from now
+            1 => match interval(vm.stack_pop(), vm.stack_pop()) {
+                Some(ms) => {
+                    let target = state.last + ms;
+                    let waited = target > state.now;
+                    state.last = if waited { target } else { state.now };
+                    vm.stack_push(waited as VMAtom);
+                    if waited { state.deadline = Some(target); vm.pause(); }
+                }
+                None => { vm.stack_pop(); vm.stack_push(0); vm.error = RuntimeError::InterruptError; }
+            }
+            // set_tick(seconds, milliseconds)
+            3 => match interval(vm.stack_pop(), vm.stack_pop()) {
+                Some(ms) => { state.tick = ms; }
+                None => { vm.error = RuntimeError::InterruptError; }
+            }
+            // pushed as hours, minutes, seconds, ms
+            10 => {
+                let now = Date::new_0();
+                for v in [now.get_hours(), now.get_minutes(), now.get_seconds(), now.get_milliseconds()] { vm.stack_push(v as VMAtom); }
+            }
+            // pushed as year, month (1-12), day
+            11 => {
+                let now = Date::new_0();
+                for v in [now.get_full_year(), now.get_month() + 1, now.get_date()] { vm.stack_push(v as VMAtom); }
+            }
+            _ => { vm.error = RuntimeError::UnimplementedInterruptFunc; }
+        }
+    }
+}
+
+/// Runs the vm for JS, see `process_commands` for the debugger commands. `now_ms` is the clock
+/// of JS (`performance.now()`), the vm does not run before a pending wait has reached its
+/// deadline. Returns when JS should call again, in ms:
+///
+/// * `> 0`: sleep that long, a wait_for/wait_until deadline, or the tick after HLT
+/// * `0`: call again right away, the op budget `max_ops` (0 = unlimited) was used up
+/// * `-1`: nothing to run, the program ended, failed (see `vm_status`) or none is loaded
+///
+/// The clock is read once per call, so a wait is measured from the start of the call it was made
+/// in. A wait or tick pauses the vm like HLT, so BRK cannot be told apart from HLT here.
+#[wasm_bindgen]
+pub fn vm_run(now_ms: f64, max_ops: u32) -> f64 {
+    if unsafe { GLOBALS.is_none() } {
+        log::error!("vm_run locked");
+        return -1.0;
+    }
+
+    let mut globals = unsafe { GLOBALS.take().unwrap() };
+    let vm = &mut globals.vm;
+    let time = &mut globals.time;
+    let surface = &mut globals.surface;
+
+    // a program starts at cycle 0, whatever the previous one was waiting for is over
+    if vm.cycle_cnt == 0 { time.start(now_ms); }
+    time.now = now_ms;
+    let delay = if matches!(vm.state, Runtime::Stp | Runtime::Err | Runtime::Ini) {
+        -1.0
+    } else if let Some(remaining) = time.remaining() {
+        remaining
+    } else {
+        let (mut time_int, mut surface_int) = (Time { state: time }, int_surface::IntSurface { surface });
+        interrupts!(let list, &mut time_int, &mut surface_int);
+        vm.run(max_ops as usize, list);
+        match vm.state {
+            Runtime::Run => 0.0,
+            Runtime::Hlt => match time.remaining() {
+                // paused by a wait_for/wait_until
+                Some(remaining) => remaining,
+                // HLT: the program sleeps the tick before its next round
+                None if time.tick > 0.0 => { time.deadline = Some(now_ms + time.tick); time.tick }
+                None => 0.0
+            }
+            _ => -1.0
+        }
+    };
+
+    unsafe { GLOBALS.replace(globals) };
+
+    delay
+}
+
+/// State of the vm as `ini`, `run`, `hlt`, `stp` or `err:<error>`, to tell why `vm_run` returned -1.
+#[wasm_bindgen]
+pub fn vm_status() -> String {
+    if unsafe { GLOBALS.is_none() } {
+        return String::from("locked");
+    }
+
+    let globals = unsafe { GLOBALS.take().unwrap() };
+    let vm = &globals.vm;
+    let status = match vm.state {
+        Runtime::Ini => String::from("ini"),
+        Runtime::Run => String::from("run"),
+        Runtime::Hlt => String::from("hlt"),
+        Runtime::Stp => String::from("stp"),
+        Runtime::Err => format!("err:{:?}", vm.error)
+    };
+
+    unsafe { GLOBALS.replace(globals) };
+
+    status
+}
+
 /// Whether `cmd` (first line of a `process_commands` input) is a `vm.*` command handled here.
 pub(crate) fn is_command(cmd: &str) -> bool {
     matches!(cmd, "vm.stp" | "vm.run" | "vm.fnc" | "vm.dis")
 }
 
-/// Runs a `vm.*` command, see `is_command`; output goes to `res`.
-pub(crate) fn command(cmd: &str, vm: &mut VirtMach<'_>, surface: &mut Surface, res: &mut BytesMut) {
+/// Runs a `vm.*` command, see `is_command`; output goes to `res`. `vm.stp` and `vm.run` are the
+/// debugger: they do not sleep, a wait just pauses the vm and the next command goes on.
+pub(crate) fn command(cmd: &str, vm: &mut VirtMach<'_>, surface: &mut Surface, time: &mut TimeState, res: &mut BytesMut) {
     match cmd {
-        "vm.stp" | "vm.run" | "vm.fnc" => {
-            // Slot = interrupt number: built-ins at their virtmach INDEX (unused ones dummy), then
-            // the custom "nodem" (BUILTIN_SLOTS), which only the device implements — here it is a stub.
-            let mut interrupts: [&mut dyn SoftInterrupt; (interrupts::BUILTIN_SLOTS + 1) as usize] = [
-                &mut math::Interrupt {},
-                &mut proc::Interrupt {},
-                &mut string::Interrupt {},
-                &mut time::Interrupt {},
-                &mut dummy::Interrupt {},
-                &mut dummy::Interrupt {},
-                &mut dummy::Interrupt {},
-                &mut dummy::Interrupt {},
-                &mut periph::Interrupt {},
-                &mut int_surface::IntSurface { surface : surface },
-                &mut dummy::Interrupt {}
-            ];
-
-            match cmd {
-                #[cfg(feature = "compile")]
-                "vm.fnc" => {
-                    let _ = vm.functions(interrupts.map(|a| (a.name(), a.functions()) ).to_vec(), res);
-                }
-                "vm.stp" | "vm.run" => {
-                    vm.run(match cmd { "vm.stp" => 1, _ => 1024 }, &mut interrupts);
-                }
-                _ => {}
-            }
+        "vm.fnc" => {
+            let _ = vm.functions(interrupts!(tables).map(|t| (t.name, t.functions)).to_vec(), res);
+        }
+        "vm.stp" | "vm.run" => {
+            time.deadline = None;
+            let (mut time_int, mut surface_int) = (Time { state: time }, int_surface::IntSurface { surface });
+            interrupts!(let list, &mut time_int, &mut surface_int);
+            vm.run(match cmd { "vm.stp" => 1, _ => 1024 }, list);
         }
         "vm.dis" => {
             let _ = vm.disassemble(res);
