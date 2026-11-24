@@ -11,6 +11,8 @@ license = "MIT"
 dom = ["nodem-rs/dom"]
 vm = ["nodem-rs/vm", "virtmach"]
 compile = ["nodem-rs/compile"]
+# the device API interrupt "nodem" for programs, off by default
+int_nodem = ["vm"]
 
 [lib]
 crate-type = ["cdylib"]
